@@ -21,6 +21,7 @@ import re
 from bs4 import BeautifulSoup
 from openai import OpenAI
 import unicodedata
+from ai.learning_system import SelfLearningAI
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -55,6 +56,9 @@ openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 app = FastAPI(title="Digital Sahayak API", version="1.0.0")
 api_router = APIRouter(prefix="/api")
 security = HTTPBearer(auto_error=False)
+
+# Initialize Self-Learning AI System
+self_learning_ai = None
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -1781,6 +1785,14 @@ async def get_categories():
 # Include router
 app.include_router(api_router)
 
+# Include Training Data Collection Routes (disabled - import issues)
+# try:
+#     from routes.training_routes import router as training_router
+#     app.include_router(training_router)
+#     logging.info("Training data collection routes loaded")
+# except ImportError as e:
+#     logging.warning(f"Training routes not available: {e}")
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
@@ -1790,8 +1802,416 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ===================== SELF-LEARNING AI ENDPOINTS =====================
+
+@api_router.post("/ai/learn-from-external")
+async def learn_from_external_ai(request: Request, current_user: dict = Depends(get_current_user)):
+    """
+    Learn from external AI (Copilot, ChatGPT, etc.) responses
+    Can optionally use web search for additional context
+    
+    Example:
+    {
+        "prompt": "How to match jobs?",
+        "other_ai_response": "Response from Copilot/ChatGPT",
+        "ai_name": "GitHub Copilot",
+        "use_web_search": true
+    }
+    """
+    try:
+        data = await request.json()
+        prompt = data.get('prompt')
+        other_response = data.get('other_ai_response')
+        ai_name = data.get('ai_name', 'External AI')
+        use_web_search = data.get('use_web_search', False)
+        
+        if not prompt or not other_response:
+            raise HTTPException(400, "prompt and other_ai_response are required")
+        
+        if not self_learning_ai:
+            raise HTTPException(503, "AI Learning System not available")
+        
+        # Learn from external AI
+        result = await self_learning_ai.learn_from_other_ai(
+            prompt, other_response, ai_name, use_web_search
+        )
+        
+        return result
+        
+    except Exception as e:
+        raise HTTPException(500, f"Learning error: {str(e)}")
+
+
+@api_router.post("/ai/generate-smart")
+async def generate_with_learning(request: Request, current_user: dict = Depends(get_current_user)):
+    """
+    Generate smart responses using past learnings and project context
+    Can optionally search web for real-time information
+    
+    Example:
+    {
+        "prompt": "Recommend jobs for user",
+        "context": "User profile data",
+        "use_web_search": true
+    }
+    """
+    try:
+        data = await request.json()
+        prompt = data.get('prompt')
+        context = data.get('context', '')
+        use_web_search = data.get('use_web_search', False)
+        
+        if not prompt:
+            raise HTTPException(400, "prompt is required")
+        
+        if not self_learning_ai:
+            raise HTTPException(503, "AI Learning System not available")
+        
+        # Generate with learning
+        result = await self_learning_ai.generate_with_learning(
+            prompt, context, use_web_search
+        )
+        
+        return result
+        
+    except Exception as e:
+        raise HTTPException(500, f"Generation error: {str(e)}")
+
+
+@api_router.post("/ai/batch-compare")
+async def batch_compare_learning(request: Request, current_user: dict = Depends(get_current_user)):
+    """
+    Compare multiple AI responses to learn best patterns
+    
+    Example:
+    {
+        "comparisons": [
+            {"ai_name": "Copilot", "prompt": "xyz", "response": "abc"},
+            {"ai_name": "ChatGPT", "prompt": "xyz", "response": "def"}
+        ]
+    }
+    """
+    try:
+        data = await request.json()
+        comparisons = data.get('comparisons', [])
+        
+        if not comparisons:
+            raise HTTPException(400, "comparisons are required")
+        
+        if not self_learning_ai:
+            raise HTTPException(503, "AI Learning System not available")
+        
+        # Batch learning
+        result = await self_learning_ai.compare_and_learn_batch(comparisons)
+        
+        return result
+        
+    except Exception as e:
+        raise HTTPException(500, f"Batch learning error: {str(e)}")
+
+
+@api_router.get("/ai/learning-stats")
+async def get_learning_statistics(current_user: dict = Depends(get_current_user)):
+    """
+    Get AI learning statistics and progress
+    """
+    try:
+        if not self_learning_ai:
+            raise HTTPException(503, "AI Learning System not available")
+        
+        stats = await self_learning_ai.get_learning_stats()
+        
+        return stats
+        
+    except Exception as e:
+        raise HTTPException(500, f"Stats error: {str(e)}")
+
+
+@api_router.post("/ai/improve-job-matching")
+async def improve_job_matching_with_ai(request: Request, current_user: dict = Depends(get_current_user)):
+    """
+    Improve job matching using AI learning and optional web search
+    
+    Example:
+    {
+        "job_id": "job123",
+        "external_suggestions": {...},  // Optional: External AI suggestions
+        "use_web_search": true         // Optional: Search web for job info
+    }
+    """
+    try:
+        data = await request.json()
+        job_id = data.get('job_id')
+        external_suggestions = data.get('external_suggestions')
+        use_web_search = data.get('use_web_search', False)
+        
+        if not job_id:
+            raise HTTPException(400, "job_id is required")
+        
+        if not self_learning_ai:
+            raise HTTPException(503, "AI Learning System not available")
+        
+        # Fetch job data
+        job = await db.jobs.find_one({"id": job_id})
+        if not job:
+            raise HTTPException(404, "Job not found")
+        
+        # Get user profile
+        user_profile = {
+            "education": current_user.get('education'),
+            "age": current_user.get('age'),
+            "state": current_user.get('state'),
+            "preferred_categories": current_user.get('preferred_categories', [])
+        }
+        
+        # Improved matching
+        result = await self_learning_ai.auto_improve_job_matching(
+            job, user_profile, external_suggestions, use_web_search
+        )
+        
+        return result
+        
+    except Exception as e:
+        raise HTTPException(500, f"Job matching error: {str(e)}")
+
+
+@api_router.post("/ai/web-search")
+async def web_search_endpoint(request: Request, current_user: dict = Depends(get_current_user)):
+    """
+    Search the web for real-time information
+    
+    Example:
+    {
+        "query": "UPSC exam 2026 eligibility",
+        "max_results": 3
+    }
+    """
+    try:
+        data = await request.json()
+        query = data.get('query')
+        max_results = data.get('max_results', 3)
+        
+        if not query:
+            raise HTTPException(400, "query is required")
+        
+        if not self_learning_ai:
+            raise HTTPException(503, "AI Learning System not available")
+        
+        # Perform web search
+        results = await self_learning_ai.web_search(query, max_results)
+        
+        return {
+            "query": query,
+            "results": results,
+            "count": len(results)
+        }
+        
+    except Exception as e:
+        raise HTTPException(500, f"Web search error: {str(e)}")
+
+
+@api_router.get("/ai/analyze-project")
+async def analyze_project_structure(current_user: dict = Depends(get_current_user)):
+    """
+    Analyze the project structure for better AI context
+    Only admins can trigger this
+    """
+    try:
+        if not current_user.get('is_admin'):
+            raise HTTPException(403, "Admin access required")
+        
+        if not self_learning_ai:
+            raise HTTPException(503, "AI Learning System not available")
+        
+        # Analyze project
+        analysis = await self_learning_ai.analyze_project_structure()
+        
+        return analysis
+        
+    except Exception as e:
+        raise HTTPException(500, f"Project analysis error: {str(e)}")
+
+
+@api_router.get("/ai/project-context")
+async def get_project_context(current_user: dict = Depends(get_current_user)):
+    """
+    Get current project context known by AI
+    """
+    try:
+        if not self_learning_ai:
+            raise HTTPException(503, "AI Learning System not available")
+        
+        return {
+            "domain": self_learning_ai.project_domain,
+            "analyzed": self_learning_ai.project_files_analyzed
+        }
+        
+    except Exception as e:
+        raise HTTPException(500, f"Context error: {str(e)}")
+
+
+@api_router.post("/ai/hybrid-match")
+async def hybrid_job_matching(request: Request, current_user: dict = Depends(get_current_user)):
+    """
+    Hybrid Rule + ML based job matching
+    Combines heuristic rules with ML predictions
+    
+    Example:
+    {
+        "job_id": "job123",
+        "use_ml": true
+    }
+    """
+    try:
+        data = await request.json()
+        job_id = data.get('job_id')
+        use_ml = data.get('use_ml', True)
+        
+        if not job_id:
+            raise HTTPException(400, "job_id is required")
+        
+        if not self_learning_ai:
+            raise HTTPException(503, "AI Learning System not available")
+        
+        # Fetch job data
+        job = await db.jobs.find_one({"id": job_id})
+        if not job:
+            raise HTTPException(404, "Job not found")
+        
+        # Get user profile
+        user_profile = {
+            "id": current_user.get('id'),
+            "education": current_user.get('education'),
+            "age": current_user.get('age'),
+            "state": current_user.get('state'),
+            "preferred_categories": current_user.get('preferred_categories', []),
+            "experience_years": current_user.get('experience_years', 0)
+        }
+        
+        # Apply hybrid matching
+        result = await self_learning_ai.hybrid_job_matching(job, user_profile, use_ml)
+        
+        return result
+        
+    except Exception as e:
+        raise HTTPException(500, f"Hybrid matching error: {str(e)}")
+
+
+@api_router.post("/ai/learn-from-logs")
+async def learn_from_interaction_logs(request: Request, current_user: dict = Depends(get_current_user)):
+    """
+    Analyze interaction logs to learn patterns and improve matching
+    Admin only
+    
+    Example:
+    {
+        "days": 7
+    }
+    """
+    try:
+        if not current_user.get('is_admin'):
+            raise HTTPException(403, "Admin access required")
+        
+        data = await request.json()
+        days = data.get('days', 7)
+        
+        if not self_learning_ai:
+            raise HTTPException(503, "AI Learning System not available")
+        
+        # Learn from logs
+        result = await self_learning_ai.learn_from_logs(days)
+        
+        return result
+        
+    except Exception as e:
+        raise HTTPException(500, f"Log learning error: {str(e)}")
+
+
+@api_router.post("/ai/add-rule")
+async def add_custom_matching_rule(request: Request, current_user: dict = Depends(get_current_user)):
+    """
+    Add a custom matching rule
+    Admin only
+    
+    Example:
+    {
+        "name": "Bihar Police Preference",
+        "condition": {"state": "Bihar", "category": "Police"},
+        "action": {"boost_score": 15},
+        "description": "Boost Bihar police jobs for Bihar residents"
+    }
+    """
+    try:
+        if not current_user.get('is_admin'):
+            raise HTTPException(403, "Admin access required")
+        
+        data = await request.json()
+        
+        if not self_learning_ai:
+            raise HTTPException(503, "AI Learning System not available")
+        
+        # Add rule
+        success = await self_learning_ai.add_custom_rule(data)
+        
+        if success:
+            return {"success": True, "message": "Rule added successfully"}
+        else:
+            raise HTTPException(500, "Failed to add rule")
+        
+    except Exception as e:
+        raise HTTPException(500, f"Add rule error: {str(e)}")
+
+
+@api_router.get("/ai/rules")
+async def get_matching_rules(current_user: dict = Depends(get_current_user)):
+    """
+    Get all active matching rules
+    """
+    try:
+        if not self_learning_ai:
+            raise HTTPException(503, "AI Learning System not available")
+        
+        rules = await self_learning_ai.get_active_rules()
+        
+        return {
+            "rules": rules,
+            "count": len(rules)
+        }
+        
+    except Exception as e:
+        raise HTTPException(500, f"Get rules error: {str(e)}")
+
+
+@api_router.get("/ai/heuristic-weights")
+async def get_heuristic_weights(current_user: dict = Depends(get_current_user)):
+    """
+    Get current heuristic matching weights
+    """
+    try:
+        if not self_learning_ai:
+            raise HTTPException(503, "AI Learning System not available")
+        
+        return {
+            "weights": self_learning_ai.heuristic_weights,
+            "total": sum(self_learning_ai.heuristic_weights.values())
+        }
+        
+    except Exception as e:
+        raise HTTPException(500, f"Get weights error: {str(e)}")
+
+
+# ===================== STARTUP & SHUTDOWN =====================
+
 @app.on_event("startup")
 async def startup():
+    global self_learning_ai
+    
+    # Initialize Self-Learning AI System
+    if openai_client:
+        self_learning_ai = SelfLearningAI(openai_client, db)
+        logger.info("Self-Learning AI System initialized")
+    
     # Create indexes
     await db.users.create_index("phone", unique=True)
     await db.users.create_index("id", unique=True)
